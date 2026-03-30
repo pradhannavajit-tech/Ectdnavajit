@@ -1,0 +1,241 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html>
+<head>
+  <title>eCTD All-in-One App</title>
+  <style>
+    body { margin:0; font-family:Arial; }
+    .container { display:flex; }
+    .sidebar {
+      width:200px; height:100vh;
+      background:#2c3e50; color:white; padding:20px;
+    }
+    .sidebar button {
+      width:100%; margin:10px 0; padding:10px;
+      background:#34495e; color:white; border:none;
+    }
+    .main { flex:1; padding:20px; }
+    input { padding:10px; margin:5px; }
+    button { padding:10px; margin:5px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { border:1px solid #ccc; padding:10px; }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="sidebar">
+    <h2>eCTD</h2>
+    <button onclick="show('register')">Register</button>
+    <button onclick="show('login')">Login</button>
+    <button onclick="show('upload')">Upload</button>
+    <button onclick="show('list')">Submissions</button>
+  </div>
+
+  <div class="main">
+
+    <!-- REGISTER -->
+    <div id="register">
+      <h2>Register</h2>
+      <input id="regUser" placeholder="Username">
+      <input id="regPass" type="password" placeholder="Password">
+      <button onclick="register()">Register</button>
+    </div>
+
+    <!-- LOGIN -->
+    <div id="login" style="display:none;">
+      <h2>Login</h2>
+      <input id="logUser" placeholder="Username">
+      <input id="logPass" type="password" placeholder="Password">
+      <button onclick="login()">Login</button>
+    </div>
+
+    <!-- UPLOAD -->
+    <div id="upload" style="display:none;">
+      <h2>Upload</h2>
+      <input id="title" placeholder="Title">
+      <input type="file" id="file">
+      <button onclick="upload()">Upload</button>
+    </div>
+
+    <!-- LIST -->
+    <div id="list" style="display:none;">
+      <h2>Submissions</h2>
+      <button onclick="loadData()">Refresh</button>
+      <table>
+        <thead>
+          <tr>
+            <th>Seq</th>
+            <th>Title</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="table"></tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<script>
+
+// SWITCH UI
+function show(id){
+  ["register","login","upload","list"].forEach(x=>{
+    document.getElementById(x).style.display="none";
+  });
+  document.getElementById(id).style.display="block";
+}
+
+// LOCAL DATABASE
+let users = JSON.parse(localStorage.getItem("users") || "[]");
+let submissions = JSON.parse(localStorage.getItem("subs") || "[]");
+
+// REGISTER
+function register(){
+  let u = regUser.value;
+  let p = regPass.value;
+
+  users.push({username:u,password:p});
+  localStorage.setItem("users", JSON.stringify(users));
+
+  alert("Registered");
+}
+
+// LOGIN
+function login(){
+  let u = logUser.value;
+  let p = logPass.value;
+
+  let user = users.find(x=>x.username===u && x.password===p);
+
+  alert(user ? "Login Success" : "Login Fail");
+}
+
+// SEQUENCE
+function nextSeq(){
+  if(submissions.length==0) return "0000";
+  let last = parseInt(submissions[submissions.length-1].seq);
+  return String(last+1).padStart(4,"0");
+}
+
+// UPLOAD
+function upload(){
+  let title = document.getElementById("title").value;
+  let file = document.getElementById("file").files[0];
+
+  let seq = nextSeq();
+
+  submissions.push({
+    id: Date.now(),
+    title,
+    file: file ? file.name : "no-file",
+    seq
+  });
+
+  localStorage.setItem("subs", JSON.stringify(submissions));
+
+  alert("Uploaded Sequence: " + seq);
+}
+
+// LOAD DATA
+function loadData(){
+  let table = document.getElementById("table");
+  table.innerHTML="";
+
+  submissions.forEach(s=>{
+    table.innerHTML += `
+      <tr>
+        <td>${s.seq}</td>
+        <td>${s.title}</td>
+        <td>
+          <button onclick="xml(${s.id})">XML</button>
+          <button onclick="validate(${s.id})">Validate</button>
+        </td>
+      </tr>
+    `;
+  });
+}
+
+// XML
+function xml(id){
+  let s = submissions.find(x=>x.id==id);
+
+  let xml = `
+<ectd>
+  <sequence>${s.seq}</sequence>
+  <title>${s.title}</title>
+  <file>${s.file}</file>
+</ectd>`;
+
+  let w = window.open();
+  w.document.write("<pre>"+xml+"</pre>");
+}
+
+// VALIDATE
+function validate(id){
+  let s = submissions.find(x=>x.id==id);
+
+  let errors = [];
+  if(!s.title) errors.push("Missing title");
+  if(!s.file) errors.push("Missing file");
+
+  alert(errors.length ? errors.join(",") : "Valid");
+}
+
+</script>
+
+</body>
+</html><script>const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const mongoose = require('mongoose');
+const fs = require('fs');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// DB
+mongoose.connect("mongodb://127.0.0.1:27017/ectd");
+
+// MODEL
+const Sub = mongoose.model("Sub", {
+  title:String,
+  file:String,
+  seq:String
+});
+
+// FILE UPLOAD
+const upload = multer({ dest: "uploads/" });
+
+// SEQUENCE
+async function nextSeq(){
+  let last = await Sub.findOne().sort({seq:-1});
+  if(!last) return "0000";
+  return String(parseInt(last.seq)+1).padStart(4,"0");
+}
+
+// UPLOAD API
+app.post("/api/upload", upload.single("file"), async(req,res)=>{
+  let seq = await nextSeq();
+
+  let dir = `ectd/${seq}/m1`;
+  fs.mkdirSync(dir,{recursive:true});
+
+  let newPath = `${dir}/${req.file.originalname}`;
+  fs.renameSync(req.file.path,newPath);
+
+  let s = new Sub({title:req.body.title,file:newPath,seq});
+  await s.save();
+
+  res.json({msg:"Uploaded",seq});
+});
+
+// GET
+app.get("/api/submissions", async(req,res)=>{
+  res.json(await Sub.find());
+});
+
+app.listen(3000,()=>console.log("Server running"));</script>
